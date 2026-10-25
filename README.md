@@ -1,4 +1,4 @@
-# 🌱 Smart Plant Care Assistant
+# Smart Plant Care Assistant
 
 A personalized plant care application that helps users understand their plants' watering needs and care requirements based on plant characteristics, environmental conditions, and soil moisture status.
 
