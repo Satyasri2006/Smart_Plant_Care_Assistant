@@ -73,6 +73,12 @@ def get_db():
         db = _client[DB_NAME]
         db.users.create_index("email", unique=True)
         db.history.create_index([("user_email", 1), ("timestamp", -1)])
+        # Partial unique index for valid string submission IDs (protects legacy docs without submission_id)
+        db.history.create_index(
+            [("user_email", 1), ("submission_id", 1)],
+            unique=True,
+            partialFilterExpression={"submission_id": {"$type": "string"}}
+        )
         return db
     except Exception as e:
         print(f"Primary MongoDB connection to {uri} failed: {e}")
@@ -86,6 +92,12 @@ def get_db():
                 db = _client[DB_NAME]
                 db.users.create_index("email", unique=True)
                 db.history.create_index([("user_email", 1), ("timestamp", -1)])
+                # Partial unique index for valid string submission IDs (protects legacy docs without submission_id)
+                db.history.create_index(
+                    [("user_email", 1), ("submission_id", 1)],
+                    unique=True,
+                    partialFilterExpression={"submission_id": {"$type": "string"}}
+                )
                 return db
             except Exception as local_err:
                 _client = None
@@ -184,8 +196,8 @@ def authenticate_user(email: str, password: str):
         return False, f"Database error during login: {str(e)}"
 
 
-def save_consultation_history(user_email: str, user_name: str, consultation_data: dict):
-    """Save an interaction/prediction into MongoDB history collection."""
+def save_consultation_history(user_email: str, user_name: str, consultation_data: dict, submission_id: str = None):
+    """Save an interaction/prediction into MongoDB history collection idempotently."""
     if not user_email or not consultation_data:
         return False
     try:
@@ -196,7 +208,16 @@ def save_consultation_history(user_email: str, user_name: str, consultation_data
             "timestamp": datetime.now(),
             **consultation_data
         }
-        db.history.insert_one(doc)
+        sub_id = submission_id or consultation_data.get("submission_id")
+        if sub_id:
+            doc["submission_id"] = str(sub_id)
+            db.history.update_one(
+                {"user_email": doc["user_email"], "submission_id": doc["submission_id"]},
+                {"$setOnInsert": doc},
+                upsert=True
+            )
+        else:
+            db.history.insert_one(doc)
         return True
     except Exception as e:
         print(f"Error saving history: {e}")

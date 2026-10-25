@@ -5,13 +5,27 @@ import requests
 import ast
 import warnings
 import base64
+import html
+import uuid
 from PIL import Image
 from datetime import datetime
 from streamlit_geolocation import streamlit_geolocation
 import db_helper
 
-# Suppress unpickling version warnings for clean terminal output
-warnings.filterwarnings("ignore", category=UserWarning)
+# Explicitly handle scikit-learn version warnings without blanket UserWarning suppression
+try:
+    from sklearn.exceptions import InconsistentVersionWarning
+    warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+except ImportError:
+    pass
+
+# Allowed CSS badge classes for safety
+ALLOWED_BADGE_CLASSES = {"badge-good", "badge-info", "badge-warn", "badge-alert"}
+
+def safe_badge(badge_name: str) -> str:
+    """Validate badge class against allowed list to avoid CSS class injection."""
+    return badge_name if badge_name in ALLOWED_BADGE_CLASSES else "badge-info"
+
 
 # =========================================
 # Load Mascot Image and Inline Icons
@@ -137,6 +151,41 @@ def parse_temperature_range(temp_pref_str):
 
 
 # =========================================
+# Weather Fetching & 15-Minute Cache
+# =========================================
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_weather_cached(lat_rounded: float, lon_rounded: float):
+    """
+    Fetch weather from Open-Meteo API using coarsened (rounded) coordinates.
+    Cached for 15 minutes (900 seconds) to avoid redundant requests.
+    Keyed on rounded coordinates for privacy and cache hits.
+    """
+    try:
+        w_res = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": lat_rounded,
+                "longitude": lon_rounded,
+                "current": "temperature_2m,relative_humidity_2m"
+            },
+            timeout=8
+        )
+        if w_res.ok:
+            data = w_res.json()
+            curr = data.get("current", {})
+            return {
+                "temp": float(curr.get("temperature_2m")),
+                "humidity": float(curr.get("relative_humidity_2m")),
+                "source": "Open-Meteo (Approximate Region)",
+                "success": True,
+                "fetched_at": datetime.now().strftime("%I:%M %p")
+            }
+        return {"success": False, "error": f"Weather API returned status {w_res.status_code}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =========================================
 # Prediction & Inference Engine
 # =========================================
 def predict_watering_frequency(plant_name, season):
@@ -199,50 +248,87 @@ def compute_environmental_adjustment(
 ):
     """
     Adjust base watering frequency dynamically according to real-time environmental stress.
-    Considers ambient temperature difference, ambient humidity, daily sun, and soil moisture.
+    Incorporates temperature deviation, plant humidity preference, daily sunlight, and soil moisture.
+    All adjustment factors are experimental botanical heuristics clamped to valid physical bounds.
     """
     factor = 1.0
     adjustment_reasons = []
 
-    # Temperature Effect
+    # 1. Temperature Effect (Experimental Heuristic)
     if current_temp is not None:
         if current_temp > temp_max:
             excess = current_temp - temp_max
             temp_penalty = min(0.30, excess * 0.03)
             factor -= temp_penalty
             adjustment_reasons.append(
-                f"High temperature (+{excess:.1f}°C above optimum) accelerates evapotranspiration."
+                f"High temperature (+{excess:.1f}°C above optimum) accelerates evapotranspiration (experimental heuristic)."
             )
         elif current_temp < temp_min:
             deficit = temp_min - current_temp
             temp_relief = min(0.35, deficit * 0.035)
             factor += temp_relief
             adjustment_reasons.append(
-                f"Cooler temperature (-{deficit:.1f}°C below optimum) slows water uptake."
+                f"Cooler temperature (-{deficit:.1f}°C below optimum) slows water uptake (experimental heuristic)."
             )
 
-    # Humidity Effect
+    # 2. Humidity Preference Effect (Experimental Botanical Heuristic)
+    pref = str(humidity_pref).lower() if humidity_pref else "medium"
     if current_humidity is not None:
-        if current_humidity < 35:
-            factor -= 0.12
-            adjustment_reasons.append("Very dry ambient air increases water evaporation from soil.")
-        elif current_humidity > 75:
-            factor += 0.15
-            adjustment_reasons.append("High ambient humidity keeps soil damp for longer.")
+        if pref == "low":
+            # Drought-adapted species (e.g. succulents, cacti)
+            if current_humidity > 70:
+                factor += 0.15
+                adjustment_reasons.append(
+                    f"High humidity ({current_humidity:.0f}%) slows soil drying for low-humidity species (experimental heuristic)."
+                )
+            elif current_humidity < 30:
+                factor -= 0.05
+                adjustment_reasons.append(
+                    f"Very dry air ({current_humidity:.0f}%) slightly increases evaporation (experimental heuristic)."
+                )
+        elif pref in ["high", "veryhigh"]:
+            # Tropical / high-moisture species (e.g. ferns, calatheas)
+            if current_humidity < 40:
+                factor -= 0.15
+                adjustment_reasons.append(
+                    f"Dry ambient air ({current_humidity:.0f}%) accelerates transpiration stress for tropical species (experimental heuristic)."
+                )
+            elif current_humidity > 75:
+                factor += 0.10
+                adjustment_reasons.append(
+                    f"High humidity ({current_humidity:.0f}%) preserves foliar and root moisture for high-humidity species (experimental heuristic)."
+                )
+        else:
+            # Medium humidity species
+            if current_humidity < 35:
+                factor -= 0.10
+                adjustment_reasons.append(
+                    f"Dry air ({current_humidity:.0f}%) increases soil water loss (experimental heuristic)."
+                )
+            elif current_humidity > 75:
+                factor += 0.12
+                adjustment_reasons.append(
+                    f"High humidity ({current_humidity:.0f}%) keeps soil damp for longer (experimental heuristic)."
+                )
 
-    # Sunlight Hours Effect
+    # 3. Sunlight Hours Effect (Experimental Heuristic)
     if sunlight_hours >= 7:
         factor -= 0.10
-        adjustment_reasons.append(f"Extended daily sunlight ({sunlight_hours:.1f} hrs) promotes high transpiration.")
+        adjustment_reasons.append(
+            f"Extended daily sunlight ({sunlight_hours:.1f} hrs) promotes high transpiration (experimental heuristic)."
+        )
     elif sunlight_hours <= 2:
         factor += 0.10
-        adjustment_reasons.append(f"Low daily sunlight ({sunlight_hours:.1f} hrs) reduces plant moisture demand.")
+        adjustment_reasons.append(
+            f"Low daily sunlight ({sunlight_hours:.1f} hrs) reduces plant moisture demand (experimental heuristic)."
+        )
 
-    # Clamp factor to realistic bounds (0.45x to 1.7x baseline)
+    # Clamp factor to realistic bounds (0.45x to 1.70x baseline)
     factor = max(0.45, min(1.70, factor))
     adjusted_interval = max(1.0, round(base_interval * factor, 1))
 
-    # Immediate Action Directive based on current soil condition
+    # 4. Immediate Action Directive based on current soil condition
+    # Decoupled from recurring watering interval
     if soil_condition == "Extremely Dry":
         action_title = "🚨 Immediate Action: Water Thoroughly Today"
         action_desc = "The soil is completely parched. Deeply water your plant until moisture drains from the bottom holes."
@@ -264,7 +350,7 @@ def compute_environmental_adjustment(
         action_desc = "Soil is saturated with water. Ensure drainage holes are free to avoid root rot and fungal issues."
         action_badge = "badge-alert"
     else:
-        action_title = f"{MASCOT_ICON_HTML} Check Soil Moisture"
+        action_title = "🌱 Check Soil Moisture"
         action_desc = f"Follow recommended cycle of watering roughly every {adjusted_interval} days."
         action_badge = "badge-info"
 
@@ -278,11 +364,11 @@ def evaluate_temperature(current_temp, temp_min, temp_max):
     if current_temp is None:
         return "Unknown", "badge-info", "Temperature reading not available."
     if current_temp < temp_min:
-        return "Cooler than preferred", "badge-warn", f"{current_temp}°C is below preferred range ({temp_min:.0f}–{temp_max:.0f}°C). Growth and water uptake may slow down."
+        return "Cooler than preferred", "badge-warn", f"{current_temp:.1f}°C is below preferred range ({temp_min:.0f}–{temp_max:.0f}°C). Growth and water uptake may slow down."
     elif current_temp > temp_max:
-        return "Warmer than preferred", "badge-alert", f"{current_temp}°C exceeds preferred range ({temp_min:.0f}–{temp_max:.0f}°C). Watch out for wilting and heat stress."
+        return "Warmer than preferred", "badge-alert", f"{current_temp:.1f}°C exceeds preferred range ({temp_min:.0f}–{temp_max:.0f}°C). Watch out for wilting and heat stress."
     else:
-        return "Ideal Temperature", "badge-good", f"{current_temp}°C is comfortably within the plant's ideal range ({temp_min:.0f}–{temp_max:.0f}°C)."
+        return "Ideal Temperature", "badge-good", f"{current_temp:.1f}°C is comfortably within the plant's ideal range ({temp_min:.0f}–{temp_max:.0f}°C)."
 
 
 def evaluate_humidity(current_humidity, recommended_humidity):
@@ -292,19 +378,19 @@ def evaluate_humidity(current_humidity, recommended_humidity):
     rec = str(recommended_humidity).lower()
     if rec == "low":
         if current_humidity > 60:
-            return "Higher than ideal", "badge-warn", f"{current_humidity}% is higher than preferred for this drought-tolerant species."
-        return "Suitable", "badge-good", f"{current_humidity}% suits this plant's low-humidity preference."
+            return "Higher than ideal", "badge-warn", f"{current_humidity:.0f}% is higher than preferred for this drought-tolerant species."
+        return "Suitable", "badge-good", f"{current_humidity:.0f}% suits this plant's low-humidity preference."
     elif rec == "medium":
         if current_humidity < 40:
-            return "Dry Air", "badge-warn", f"{current_humidity}% is slightly dry. Consider light misting or grouping plants."
+            return "Dry Air", "badge-warn", f"{current_humidity:.0f}% is slightly dry. Consider light misting or grouping plants."
         elif current_humidity > 75:
-            return "Humid", "badge-info", f"{current_humidity}% is humid; keep adequate airflow."
-        return "Suitable", "badge-good", f"{current_humidity}% aligns with medium humidity requirements (40–70%)."
+            return "Humid", "badge-info", f"{current_humidity:.0f}% is humid; keep adequate airflow."
+        return "Suitable", "badge-good", f"{current_humidity:.0f}% aligns with medium humidity requirements (40–70%)."
     elif rec in ["high", "veryhigh"]:
         if current_humidity < 55:
-            return "Insufficient Humidity", "badge-alert", f"{current_humidity}% is low for this tropical plant. Use a pebble tray or humidifier."
-        return "Optimal Humidity", "badge-good", f"{current_humidity}% is ideal for high humidity lovers."
-    return "Acceptable", "badge-info", f"Current humidity: {current_humidity}%."
+            return "Insufficient Humidity", "badge-alert", f"{current_humidity:.0f}% is low for this tropical plant. Use a pebble tray or humidifier."
+        return "Optimal Humidity", "badge-good", f"{current_humidity:.0f}% is ideal for high humidity lovers."
+    return "Acceptable", "badge-info", f"Current humidity: {current_humidity:.0f}%."
 
 
 # =========================================
@@ -326,10 +412,16 @@ if "current_humidity" not in st.session_state:
     st.session_state["current_humidity"] = None
 if "weather_source" not in st.session_state:
     st.session_state["weather_source"] = None
+if "weather_last_fetched" not in st.session_state:
+    st.session_state["weather_last_fetched"] = None
+if "weather_is_stale" not in st.session_state:
+    st.session_state["weather_is_stale"] = False
 if "active_consultation" not in st.session_state:
     st.session_state["active_consultation"] = None
-if "last_saved_key" not in st.session_state:
-    st.session_state["last_saved_key"] = None
+if "active_submission_id" not in st.session_state:
+    st.session_state["active_submission_id"] = None
+if "last_saved_submission_id" not in st.session_state:
+    st.session_state["last_saved_submission_id"] = None
 
 
 # =========================================
@@ -337,16 +429,19 @@ if "last_saved_key" not in st.session_state:
 # =========================================
 def save_current_consultation_if_needed():
     """Ensure the current active consultation is saved to MongoDB history before leaving."""
-    if st.session_state.get("active_consultation") and st.session_state.get("user"):
-        c_data = st.session_state["active_consultation"]
-        c_key = f"{c_data.get('plant_name')}_{c_data.get('season')}_{c_data.get('temperature')}_{c_data.get('humidity')}_{c_data.get('soil_condition')}"
-        if st.session_state.get("last_saved_key") != c_key:
-            db_helper.save_consultation_history(
-                user_email=st.session_state["user"]["email"],
-                user_name=st.session_state["user"]["name"],
-                consultation_data=c_data
+    active_id = st.session_state.get("active_submission_id")
+    c_data = st.session_state.get("active_consultation")
+    user = st.session_state.get("user")
+    if active_id and c_data and user:
+        if st.session_state.get("last_saved_submission_id") != active_id:
+            saved = db_helper.save_consultation_history(
+                user_email=user["email"],
+                user_name=user["name"],
+                consultation_data=c_data,
+                submission_id=active_id
             )
-            st.session_state["last_saved_key"] = c_key
+            if saved:
+                st.session_state["last_saved_submission_id"] = active_id
 
 
 # =========================================
@@ -377,10 +472,10 @@ if not st.session_state.get("started", False):
         conn_err = conn_res[2] if len(conn_res) > 2 else (conn_name if not conn_ok else None)
 
         if not conn_ok:
-            st.error(f"⚠️ **MongoDB Connection Notice**: {conn_err}")
+            st.error(f"⚠️ **MongoDB Connection Notice**: {html.escape(str(conn_err))}")
         else:
             if "Atlas" in str(conn_name):
-                st.caption(f"☁️ Connected to **{conn_name}**")
+                st.caption(f"☁️ Connected to **{html.escape(str(conn_name))}**")
 
         # If user is not logged in: display Login / Register interface matching reference
         if st.session_state.get("user") is None:
@@ -448,12 +543,14 @@ if not st.session_state.get("started", False):
         else:
             # User is already logged in
             current_user = st.session_state["user"]
+            safe_u_name = html.escape(str(current_user.get('name', 'Friend')))
+            safe_u_email = html.escape(str(current_user.get('email', '')))
             st.markdown(
                 f'''
                 <div class="auth-card" style="text-align: center; margin-top: 25px; padding: 40px 24px;">
                     <div style="font-size: 42px; margin-bottom: 10px;">👋</div>
-                    <div class="auth-header-title">Hi {current_user['name']}!</div>
-                    <div class="auth-header-sub">Logged in as <b>{current_user['email']}</b></div>
+                    <div class="auth-header-title">Hi {safe_u_name}!</div>
+                    <div class="auth-header-sub">Logged in as <b>{safe_u_email}</b></div>
                     <div style="color: #66756A; font-size: 14px; margin-bottom: 25px;">
                         Your plant profiles, environmental history, and personalized care data are ready.
                     </div>
@@ -483,10 +580,12 @@ current_user = st.session_state.get("user") or {"name": "Friend", "email": ""}
 user_name = current_user.get("name", "Friend")
 user_email = current_user.get("email", "")
 
+safe_header_name = html.escape(str(user_name))
+
 header_left, header_right = st.columns([3.8, 1.4], gap="medium")
 
 with header_left:
-    st.markdown(f'<div class="user-greeting">Hi, {user_name}!</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="user-greeting">Hi, {safe_header_name}!</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="main-title">{MASCOT_ICON_HTML} Your Smart Plant Care Assistant</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="subtitle">'
@@ -507,6 +606,7 @@ with header_right:
         if st.button("🏠 Home", use_container_width=True, key="home_nav_btn"):
             save_current_consultation_if_needed()
             st.session_state["active_consultation"] = None
+            st.session_state["active_submission_id"] = None
             st.session_state["show_suggestions"] = False
             st.session_state["started"] = False
             st.session_state["view_mode"] = "main"
@@ -517,6 +617,7 @@ with header_right:
             st.session_state["user"] = None
             st.session_state["started"] = False
             st.session_state["active_consultation"] = None
+            st.session_state["active_submission_id"] = None
             st.session_state["show_suggestions"] = False
             st.session_state["view_mode"] = "main"
             st.rerun()
@@ -526,9 +627,9 @@ with header_right:
 # 3. Consultation History View
 # =========================================
 if st.session_state.get("view_mode") == "history":
-    st.markdown(f'<div class="section-title">📜 Consultation History for {user_name}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-title">📜 Consultation History for {safe_header_name}</div>', unsafe_allow_html=True)
     conn_type, _ = db_helper.get_connection_status()
-    st.caption(f"Account: {user_email} | Stored securely in {conn_type}")
+    st.caption(f"Account: {html.escape(user_email)} | Stored securely in {html.escape(str(conn_type))}")
 
     hist_act1, hist_act2, _ = st.columns([1.2, 1.2, 2.6])
     with hist_act1:
@@ -545,7 +646,7 @@ if st.session_state.get("view_mode") == "history":
 
     if not history_records:
         st.markdown(
-            f"""
+            '''
             <div class="plant-card" style="text-align: center; padding: 60px 20px; margin-top: 20px;">
                 <div style="font-size: 48px; margin-bottom: 12px;">🌱</div>
                 <div style="font-size: 20px; font-weight: 700; color: #234D35;">No History Yet</div>
@@ -553,7 +654,7 @@ if st.session_state.get("view_mode") == "history":
                     Ask for watering recommendations for any plant, and your consultation history will be saved here automatically.
                 </div>
             </div>
-            """,
+            ''',
             unsafe_allow_html=True
         )
     else:
@@ -569,28 +670,50 @@ if st.session_state.get("view_mode") == "history":
             temp_val = rec.get("temperature")
             hum_val = rec.get("humidity")
             sun_val = rec.get("sunlight_hours")
-            badge_class = rec.get("action_badge", "badge-info")
+            badge_class = safe_badge(rec.get("action_badge", "badge-info"))
+            is_aq = bool(rec.get("is_aquatic")) or str(rec_interval).lower() in ["continuous immersion", "immersion"]
+
+            # Safe cycle badge rendering for both numeric and aquatic string intervals
+            if is_aq:
+                cycle_badge_html = '<span class="badge badge-good">Care: Continuous Immersion</span>'
+            else:
+                try:
+                    f_val = float(rec_interval)
+                    cycle_badge_html = f'<span class="badge badge-good">Cycle: Every {f_val:.1f} Days</span>'
+                except (ValueError, TypeError):
+                    cycle_badge_html = f'<span class="badge badge-good">Cycle: {html.escape(str(rec_interval))}</span>'
+
+            # Escaped strings for injection protection
+            s_time = html.escape(str(timestamp_str))
+            s_plant = html.escape(str(plant_title))
+            s_season = html.escape(str(season_info))
+            s_title = html.escape(str(act_title))
+            s_desc = html.escape(str(act_desc))
+            s_soil = html.escape(str(soil_cond))
+            s_temp = html.escape(f"{temp_val:.1f}" if isinstance(temp_val, (int, float)) else str(temp_val or "--"))
+            s_hum = html.escape(f"{hum_val:.0f}" if isinstance(hum_val, (int, float)) else str(hum_val or "--"))
+            s_sun = html.escape(f"{sun_val:.1f}" if isinstance(sun_val, (int, float)) else str(sun_val or "--"))
 
             st.markdown(
-                f"""
+                f'''
                 <div class="history-entry-card">
-                    <div class="history-time">🗓️ {timestamp_str}</div>
+                    <div class="history-time">🗓️ {s_time}</div>
                     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
                         <div class="history-plant-title">
-                            {MASCOT_ICON_HTML} {plant_title} <span style="font-size: 14px; font-weight: 500; color: #66756A;">({season_info})</span>
+                            {MASCOT_ICON_HTML} {s_plant} <span style="font-size: 14px; font-weight: 500; color: #66756A;">({s_season})</span>
                         </div>
                         <div>
-                            <span class="badge {badge_class}">{soil_cond} Soil</span>
-                            <span class="badge badge-good">Cycle: Every {rec_interval} Days</span>
+                            <span class="badge {badge_class}">{s_soil} Soil</span>
+                            {cycle_badge_html}
                         </div>
                     </div>
-                    <div style="font-size: 14px; font-weight: 700; color: #234D35; margin-top: 10px;">{act_title}</div>
-                    <div style="font-size: 13.5px; color: #435A4B; margin-top: 4px;">{act_desc}</div>
+                    <div style="font-size: 14px; font-weight: 700; color: #234D35; margin-top: 10px;">{s_title}</div>
+                    <div style="font-size: 13.5px; color: #435A4B; margin-top: 4px;">{s_desc}</div>
                     <div style="font-size: 12px; color: #718078; margin-top: 8px;">
-                        🌡️ Temp: {temp_val}°C &nbsp;|&nbsp; 💧 Humidity: {hum_val}% &nbsp;|&nbsp; ☀️ Sunlight: {sun_val} hrs
+                        🌡️ Temp: {s_temp}°C &nbsp;|&nbsp; 💧 Humidity: {s_hum}% &nbsp;|&nbsp; ☀️ Sunlight: {s_sun} hrs
                     </div>
                 </div>
-                """,
+                ''',
                 unsafe_allow_html=True
             )
 
@@ -621,40 +744,41 @@ with col_inputs:
     st.caption("Click the button below to allow browser location access and fetch live local weather:")
     location = streamlit_geolocation()
 
-    # Process live browser GPS location when permission is granted
+    # Process live browser GPS location with coarsened coordinates (rounded to 1 decimal place for privacy and cache hits)
+    # Do not overwrite if user has set a manual override in the current session
     if (
         location
         and location.get("latitude") is not None
         and location.get("longitude") is not None
+        and st.session_state.get("weather_source") != "Manual Override"
     ):
-        lat = location["latitude"]
-        lon = location["longitude"]
+        raw_lat = location["latitude"]
+        raw_lon = location["longitude"]
+        coarse_lat = round(raw_lat, 1)
+        coarse_lon = round(raw_lon, 1)
 
-        try:
-            w_res = requests.get(
-                "https://api.open-meteo.com/v1/forecast",
-                params={
-                    "latitude": lat,
-                    "longitude": lon,
-                    "current": "temperature_2m,relative_humidity_2m"
-                },
-                timeout=10
-            )
-            if w_res.ok:
-                w_json = w_res.json()
-                st.session_state["current_temp"] = float(w_json["current"]["temperature_2m"])
-                st.session_state["current_humidity"] = float(w_json["current"]["relative_humidity_2m"])
-                st.session_state["weather_source"] = f"Live GPS ({lat:.2f}°, {lon:.2f}°)"
+        weather_res = fetch_weather_cached(coarse_lat, coarse_lon)
+        if weather_res.get("success"):
+            st.session_state["current_temp"] = weather_res["temp"]
+            st.session_state["current_humidity"] = weather_res["humidity"]
+            st.session_state["weather_source"] = weather_res["source"]
+            st.session_state["weather_last_fetched"] = weather_res.get("fetched_at")
+            st.session_state["weather_is_stale"] = False
+        else:
+            if st.session_state.get("current_temp") is not None:
+                st.session_state["weather_is_stale"] = True
+                st.warning(f"⚠️ Weather refresh failed ({weather_res.get('error')}). Using previously retrieved weather data.")
             else:
-                st.warning("Unable to fetch current weather data from meteorological server.")
-        except Exception as e:
-            st.warning(f"Weather fetch error: {e}")
+                st.warning("Unable to fetch live weather data. You may set ambient values in the manual override below.")
 
-    # Display live weather status badge if GPS data is present
+    # Display live weather status badge if temperature/humidity are available
     if st.session_state["current_temp"] is not None and st.session_state["current_humidity"] is not None:
+        source_label = html.escape(str(st.session_state.get("weather_source", "Ambient")))
+        time_note = f" (at {st.session_state['weather_last_fetched']})" if st.session_state.get("weather_last_fetched") else ""
+        stale_note = " [Cached / Stale]" if st.session_state.get("weather_is_stale") else ""
         st.success(
-            f"✅ **Live Weather Synchronized ({st.session_state['weather_source']}):**  \n"
-            f"**{st.session_state['current_temp']}°C** temperature &nbsp;|&nbsp; **{st.session_state['current_humidity']}%** humidity"
+            f"✅ **Weather Synchronized ({source_label}{time_note}{stale_note}):**  \n"
+            f"**{st.session_state['current_temp']:.1f}°C** temperature &nbsp;|&nbsp; **{st.session_state['current_humidity']:.0f}%** humidity"
         )
     else:
         st.info("👆 Please click the location pin button above and allow permission when prompted by your browser.")
@@ -668,6 +792,8 @@ with col_inputs:
             st.session_state["current_temp"] = man_temp
             st.session_state["current_humidity"] = man_hum
             st.session_state["weather_source"] = "Manual Override"
+            st.session_state["weather_last_fetched"] = datetime.now().strftime("%I:%M %p")
+            st.session_state["weather_is_stale"] = False
             st.rerun()
 
     st.markdown(f'<div class="section-title">{MASCOT_ICON_HTML} 3. Plant Environment</div>', unsafe_allow_html=True)
@@ -715,6 +841,8 @@ with col_inputs:
             st.error("Please choose a plant first before getting suggestions.")
             st.session_state["show_suggestions"] = False
         else:
+            # Generate fresh submission ID uniquely scoped for this deliberate submission
+            st.session_state["active_submission_id"] = uuid.uuid4().hex
             st.session_state["show_suggestions"] = True
 
 
@@ -724,7 +852,7 @@ with col_inputs:
 with col_dashboard:
     if not st.session_state.get("show_suggestions", False):
         st.markdown(
-            f"""
+            f'''
             <div class="plant-card" style="text-align: center; padding: 70px 24px;">
                 <div style="margin-bottom: 16px;"><img src="data:image/png;base64,{img_b64}" class="mascot-icon" style="height: 52px; width: auto; border-radius: 8px;" alt="mascot"></div>
                 <div style="font-size: 22px; font-weight: 700; color: #234D35;">Awaiting Your Input</div>
@@ -732,11 +860,14 @@ with col_dashboard:
                     Select your plant, allow browser location permission to sync live temperature & humidity, set your environment, and click <b>"Get suggestions"</b> below.
                 </div>
             </div>
-            """,
+            ''',
             unsafe_allow_html=True
         )
 
     else:
+        active_sub_id = st.session_state.get("active_submission_id") or uuid.uuid4().hex
+        st.session_state["active_submission_id"] = active_sub_id
+
         active_temp = st.session_state.get("current_temp")
         active_hum = st.session_state.get("current_humidity")
 
@@ -768,19 +899,69 @@ with col_dashboard:
         is_aquatic = (str(watering_method).lower() == "immersion" and str(drainage_pref).lower() == "waterloggingtolerant")
 
         if is_aquatic:
+            action_title = "🌊 Aquatic Species: Continuous Water Immersion"
+            action_desc = f"{selected_plant} is an aquatic species requiring continuous water immersion. Standard soil watering intervals do not apply."
+            action_badge = "badge-info"
+            plant_care_note = care_tips if care_tips and care_tips != "None" else "Maintain clean, clear water and ensure suitable aquatic lighting."
+
+            # Structure consultation for aquatic plant
+            active_consultation = {
+                "submission_id": active_sub_id,
+                "plant_name": selected_plant,
+                "season": dataset_season,
+                "temperature": active_temp,
+                "humidity": active_hum,
+                "weather_source": st.session_state.get("weather_source", "Approximate Region"),
+                "sunlight_hours": sunlight_hours,
+                "soil_condition": "Continuous Aquatic Immersion",
+                "recommended_interval": "Continuous Immersion",
+                "base_interval": "N/A",
+                "is_aquatic": True,
+                "action_title": action_title,
+                "action_desc": action_desc,
+                "action_badge": action_badge,
+                "reasons": ["Continuous immersion required for aquatic species."],
+                "care_profile": {
+                    "light": light_pref,
+                    "watering_method": watering_method,
+                    "drainage": drainage_pref,
+                    "soil_ph": soil_ph,
+                    "care_tips": plant_care_note
+                }
+            }
+            st.session_state["active_consultation"] = active_consultation
+
+            # Idempotent persistence to MongoDB
+            if st.session_state.get("last_saved_submission_id") != active_sub_id and user_email:
+                saved = db_helper.save_consultation_history(
+                    user_email=user_email,
+                    user_name=user_name,
+                    consultation_data=active_consultation,
+                    submission_id=active_sub_id
+                )
+                if saved:
+                    st.session_state["last_saved_submission_id"] = active_sub_id
+
+            # Render Aquatic Hero Card with escaped content
             st.markdown(
-                f"""
+                f'''
                 <div class="hero-card">
-                    <div class="card-label">Aquatic Species Care</div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span class="card-label">Aquatic Species Care Directive</span>
+                        <span class="badge badge-info">Aquatic Species</span>
+                    </div>
                     <div class="hero-value">🌊 Continuous Immersion</div>
                     <div class="hero-sub">
-                        <b>{selected_plant}</b> is an aquatic plant requiring continuous water immersion. Standard soil drying schedules do not apply.
+                        <b>{html.escape(selected_plant)}</b> is an aquatic plant requiring continuous water immersion. Standard soil drying schedules do not apply.
                     </div>
+                    <hr style="margin: 14px 0 10px 0; border-top: 1px dashed #C5D6C8;">
+                    <div style="font-size: 15.5px; font-weight: 700; color: #234D35; margin-bottom: 4px;">{html.escape(action_title)}</div>
+                    <div style="font-size: 13.5px; color: #435A4B;">{html.escape(action_desc)}</div>
                 </div>
-                """,
+                ''',
                 unsafe_allow_html=True
             )
-            st.info("💧 **Care Directive:** Ensure clean water immersion at all times. Replace 20–30% of water periodically.")
+            st.info(f"💧 **Botanical Care Directive:** {plant_care_note}")
 
         else:
             base_freq, freq_source = predict_watering_frequency(selected_plant, dataset_season)
@@ -798,15 +979,17 @@ with col_dashboard:
 
             # Store current consultation in session state and persist to MongoDB
             active_consultation = {
+                "submission_id": active_sub_id,
                 "plant_name": selected_plant,
                 "season": dataset_season,
                 "temperature": active_temp,
                 "humidity": active_hum,
-                "weather_source": st.session_state.get("weather_source", "Ambient"),
+                "weather_source": st.session_state.get("weather_source", "Approximate Region"),
                 "sunlight_hours": sunlight_hours,
                 "soil_condition": soil_condition,
                 "recommended_interval": adj_interval,
                 "base_interval": base_freq,
+                "is_aquatic": False,
                 "action_title": action_title,
                 "action_desc": action_desc,
                 "action_badge": action_badge,
@@ -821,34 +1004,42 @@ with col_dashboard:
             }
             st.session_state["active_consultation"] = active_consultation
 
-            # Auto-save to MongoDB
-            c_key = f"{selected_plant}_{dataset_season}_{active_temp}_{active_hum}_{soil_condition}"
-            if st.session_state.get("last_saved_key") != c_key and user_email:
-                db_helper.save_consultation_history(
+            # Auto-save to MongoDB idempotently
+            if st.session_state.get("last_saved_submission_id") != active_sub_id and user_email:
+                saved = db_helper.save_consultation_history(
                     user_email=user_email,
                     user_name=user_name,
-                    consultation_data=active_consultation
+                    consultation_data=active_consultation,
+                    submission_id=active_sub_id
                 )
-                st.session_state["last_saved_key"] = c_key
+                if saved:
+                    st.session_state["last_saved_submission_id"] = active_sub_id
+
+            # Escaped strings for recommendation card
+            s_action_badge = safe_badge(action_badge)
+            s_soil_cond = html.escape(str(soil_condition))
+            s_action_title = html.escape(str(action_title))
+            s_action_desc = html.escape(str(action_desc))
+            s_season = html.escape(str(dataset_season))
 
             # --- Hero Recommendation Card ---
             st.markdown(
-                f"""
+                f'''
                 <div class="hero-card">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <span class="card-label">Recommended Watering Cycle</span>
-                        <span class="badge {action_badge}">{soil_condition} Soil</span>
+                        <span class="badge {s_action_badge}">{s_soil_cond} Soil</span>
                     </div>
                     <div class="hero-value">Every {adj_interval:.1f} Days</div>
                     <div class="hero-sub">
-                        Baseline model: <b>{base_freq:.1f} days</b> ({dataset_season} schedule)
-                        {f' • Adjusted for current climate' if adj_interval != base_freq else ' • Matches ideal baseline'}
+                        Baseline model: <b>{base_freq:.1f} days</b> ({s_season} schedule)
+                        {' • Adjusted for current climate' if adj_interval != base_freq else ' • Matches ideal baseline'}
                     </div>
                     <hr style="margin: 14px 0 10px 0; border-top: 1px dashed #C5D6C8;">
-                    <div style="font-size: 15.5px; font-weight: 700; color: #234D35; margin-bottom: 4px;">{action_title}</div>
-                    <div style="font-size: 13.5px; color: #435A4B;">{action_desc}</div>
+                    <div style="font-size: 15.5px; font-weight: 700; color: #234D35; margin-bottom: 4px;">{s_action_title}</div>
+                    <div style="font-size: 13.5px; color: #435A4B;">{s_action_desc}</div>
                 </div>
-                """,
+                ''',
                 unsafe_allow_html=True
             )
 
@@ -861,51 +1052,57 @@ with col_dashboard:
             diag_col1, diag_col2 = st.columns(2)
             with diag_col1:
                 st.markdown(
-                    f"""
+                    f'''
                     <div class="recommendation-card">
                         <div class="card-label">Ambient Temperature</div>
                         <div class="card-value">{active_temp:.1f}°C</div>
-                        <span class="badge {temp_badge}">{temp_eval}</span>
-                        <div style="font-size: 12.5px; color: #556B5D; margin-top: 6px;">{temp_msg}</div>
+                        <span class="badge {safe_badge(temp_badge)}">{html.escape(temp_eval)}</span>
+                        <div style="font-size: 12.5px; color: #556B5D; margin-top: 6px;">{html.escape(temp_msg)}</div>
                     </div>
-                    """,
+                    ''',
                     unsafe_allow_html=True
                 )
             with diag_col2:
                 st.markdown(
-                    f"""
+                    f'''
                     <div class="recommendation-card">
                         <div class="card-label">Ambient Humidity</div>
                         <div class="card-value">{active_hum:.0f}%</div>
-                        <span class="badge {hum_badge}">{hum_eval}</span>
-                        <div style="font-size: 12.5px; color: #556B5D; margin-top: 6px;">{hum_msg}</div>
+                        <span class="badge {safe_badge(hum_badge)}">{html.escape(hum_eval)}</span>
+                        <div style="font-size: 12.5px; color: #556B5D; margin-top: 6px;">{html.escape(hum_msg)}</div>
                     </div>
-                    """,
+                    ''',
                     unsafe_allow_html=True
                 )
 
             if reasons:
-                with st.expander("🔍 Why was the watering frequency adjusted?", expanded=False):
+                with st.expander("🔍 Why was the watering frequency adjusted? (Botanical Heuristics)", expanded=False):
                     for r in reasons:
-                        st.markdown(f"- {r}")
+                        st.markdown(f"- {html.escape(r)}")
 
         # --- Botanical Care Guide Card ---
         st.markdown('<div class="section-title">📖 Botanical Care Guide</div>', unsafe_allow_html=True)
 
+        s_light = html.escape(str(light_pref))
+        s_water_meth = html.escape(str(watering_method))
+        s_drainage = html.escape(str(drainage_pref))
+        s_soil_ph = html.escape(str(soil_ph))
+        s_care_tips = html.escape(str(care_tips))
+
         st.markdown(
-            f"""
+            f'''
             <div class="plant-card">
                 <div style="margin-bottom: 14px;">
-                    <span class="badge badge-good">☀️ Light: {light_pref}</span>
-                    <span class="badge badge-info">💧 Method: {watering_method}</span>
-                    <span class="badge badge-good">{MASCOT_ICON_HTML} Drainage: {drainage_pref}</span>
-                    <span class="badge badge-info">🧪 Soil pH: {soil_ph}</span>
+                    <span class="badge badge-good">☀️ Light: {s_light}</span>
+                    <span class="badge badge-info">💧 Method: {s_water_meth}</span>
+                    <span class="badge badge-good">{MASCOT_ICON_HTML} Drainage: {s_drainage}</span>
+                    <span class="badge badge-info">🧪 Soil pH: {s_soil_ph}</span>
                     <span class="badge badge-warn">🌡️ Preferred: {temp_min:.0f}–{temp_max:.0f}°C</span>
                 </div>
                 <div class="card-label" style="margin-bottom: 6px;">Care Instructions</div>
-                <div class="care-tips">{care_tips}</div>
+                <div class="care-tips">{s_care_tips}</div>
             </div>
-            """,
+            ''',
             unsafe_allow_html=True
         )
 
@@ -922,7 +1119,7 @@ with col_dashboard:
                 return f"{float(val):.0f} days" if pd.notna(val) else "N/A"
 
             st.markdown(
-                f"""
+                f'''
                 <div class="season-grid">
                     <div class="season-chip {'active' if dataset_season == 'Spring' else ''}">
                         <div class="season-name">🌸 Spring</div>
@@ -941,6 +1138,6 @@ with col_dashboard:
                         <div class="season-val">{format_int(wi_int)}</div>
                     </div>
                 </div>
-                """,
+                ''',
                 unsafe_allow_html=True
             )
