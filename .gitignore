@@ -1,0 +1,77 @@
+# =========================================
+# Secrets and Credentials (CRITICAL)
+# =========================================
+.env
+.env.local
+.env.*
+!.env.example
+.streamlit/secrets.toml
+!.streamlit/secrets.toml.example
+secrets/
+*.pem
+*.key
+
+# =========================================
+# Virtual Environments
+# =========================================
+.venv/
+.venv312/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# =========================================
+# Python Caches & Bytecode
+# =========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# =========================================
+# IDE and Editor Files
+# =========================================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# =========================================
+# OS Generated Files
+# =========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# =========================================
+# Logs and Databases
+# =========================================
+*.log
+local_db/
+scratch/
+

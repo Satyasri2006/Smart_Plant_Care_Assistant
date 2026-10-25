@@ -1,0 +1,473 @@
+/* =========================================
+   Smart Plant Care Assistant
+   Botanical Theme
+   ========================================= */
+
+/* Main application background */
+.stApp {
+    background-color: #F7F5EF;
+    color: #26352B;
+}
+
+/* Main content area */
+.block-container {
+    max-width: 1100px;
+    padding-top: 3rem;
+    padding-bottom: 4rem;
+}
+
+/* Main title */
+.main-title {
+    font-size: 42px;
+    font-weight: 700;
+    color: #234D35;
+    margin-bottom: 8px;
+    letter-spacing: -0.5px;
+}
+
+/* Subtitle */
+.subtitle {
+    font-size: 17px;
+    color: #66756A;
+    margin-bottom: 30px;
+}
+
+/* Section headings */
+.section-title {
+    font-size: 24px;
+    font-weight: 650;
+    color: #315C42;
+    margin-top: 25px;
+    margin-bottom: 15px;
+}
+
+/* White cards */
+.plant-card {
+    background-color: #FFFFFF;
+    border: 1px solid #DCE5DD;
+    border-radius: 18px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 5px 18px rgba(35, 77, 53, 0.07);
+}
+
+/* Input labels */
+label {
+    color: #34483B !important;
+    font-weight: 600 !important;
+}
+
+/* Select boxes */
+.stSelectbox > div > div {
+    border-radius: 10px;
+}
+
+/* Number inputs */
+.stNumberInput > div > div {
+    border-radius: 10px;
+}
+
+/* Buttons */
+.stButton > button {
+    background-color: #315C42;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 24px;
+    font-size: 16px;
+    font-weight: 700;
+    width: 100%;
+    transition: all 0.25s ease;
+    box-shadow: 0 4px 14px rgba(35, 77, 53, 0.18);
+}
+
+/* Button hover */
+.stButton > button:hover {
+    background-color: #214430;
+    color: #FFFFFF;
+    box-shadow: 0 6px 18px rgba(35, 77, 53, 0.28);
+}
+
+/* Success messages */
+.stAlert {
+    border-radius: 12px;
+}
+
+/* Dividers */
+hr {
+    border: none;
+    border-top: 1px solid #DCE5DD;
+    margin: 30px 0;
+}
+
+/* Recommendation cards */
+.recommendation-card {
+    background-color: #FFFFFF;
+    border-left: 5px solid #6F927A;
+    border-radius: 14px;
+    padding: 18px 22px;
+    margin: 12px 0;
+    box-shadow: 0 3px 12px rgba(35, 77, 53, 0.05);
+}
+
+/* Small card labels */
+.card-label {
+    color: #718078;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+/* Large card values */
+.card-value {
+    color: #234D35;
+    font-size: 22px;
+    font-weight: 700;
+    margin-top: 4px;
+}
+
+/* Care tips section */
+.care-tips {
+    background-color: #EEF4EE;
+    border-radius: 14px;
+    padding: 20px;
+    color: #34483B;
+    line-height: 1.6;
+}
+
+/* Badges */
+.badge {
+    display: inline-block;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    margin-right: 6px;
+    margin-bottom: 6px;
+}
+
+.badge-good {
+    background-color: #E2F0D9;
+    color: #276A3C;
+    border: 1px solid #C4E2B6;
+}
+
+.badge-warn {
+    background-color: #FEF3D6;
+    color: #946200;
+    border: 1px solid #F9DE96;
+}
+
+.badge-alert {
+    background-color: #FDE8E8;
+    color: #9B1C1C;
+    border: 1px solid #F8B4B4;
+}
+
+.badge-info {
+    background-color: #E1EFFE;
+    color: #1E429F;
+    border: 1px solid #B4C6EE;
+}
+
+/* Hero recommendation card */
+.hero-card {
+    background: linear-gradient(135deg, #FFFFFF 0%, #F4F8F4 100%);
+    border: 2px solid #6F927A;
+    border-radius: 18px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 6px 20px rgba(35, 77, 53, 0.08);
+}
+
+.hero-value {
+    color: #1D432D;
+    font-size: 32px;
+    font-weight: 800;
+    margin: 8px 0;
+}
+
+.hero-sub {
+    font-size: 14px;
+    color: #556B5D;
+}
+
+/* Seasonal chips */
+.season-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.season-chip {
+    flex: 1 1 calc(25% - 10px);
+    min-width: 110px;
+    background: #FFFFFF;
+    border: 1px solid #DCE5DD;
+    border-radius: 12px;
+    padding: 12px;
+    text-align: center;
+}
+
+.season-chip.active {
+    border-color: #315C42;
+    background-color: #EDF5EE;
+}
+
+.season-chip .season-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #66756A;
+    text-transform: uppercase;
+}
+
+.season-chip .season-val {
+    font-size: 18px;
+    font-weight: 700;
+    color: #234D35;
+    margin-top: 4px;
+}
+
+
+/* Landing Screen */
+.landing-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    max-width: 500px;
+    margin: 2rem auto 0.5rem auto;
+    padding: 30px 24px 15px 24px;
+    background: #FFFFFF;
+    border-radius: 24px;
+    border: 1px solid #DCE5DD;
+    box-shadow: 0 10px 32px rgba(35, 77, 53, 0.08);
+}
+
+.landing-img {
+    width: 230px;
+    max-width: 85%;
+    margin-bottom: 15px;
+    filter: drop-shadow(0 8px 20px rgba(35, 77, 53, 0.16));
+    object-fit: contain;
+}
+
+.landing-title {
+    font-size: 34px;
+    font-weight: 800;
+    color: #234D35;
+    letter-spacing: -0.5px;
+    margin-top: 8px;
+    margin-bottom: 10px;
+    text-align: center;
+    line-height: 1.25;
+}
+
+/* Inline Mascot Icon (Emoji Replacement) */
+.mascot-icon {
+    height: 1.15em;
+    width: auto;
+    vertical-align: -0.16em;
+    border-radius: 3px;
+    display: inline-block;
+    margin-right: 4px;
+    object-fit: contain;
+}
+
+label img, button img, .stButton button img, .stSelectbox label img {
+    height: 1.15em !important;
+    width: auto !important;
+    vertical-align: -0.16em !important;
+    border-radius: 3px !important;
+    display: inline-block !important;
+    margin-right: 4px !important;
+    object-fit: contain !important;
+}
+
+
+/* Decorative Vines on Blank Spaces */
+.vine-decorative {
+    position: fixed;
+    top: -5px;
+    height: 520px;
+    max-height: 82vh;
+    width: auto;
+    z-index: 999;
+    pointer-events: none;
+    user-select: none;
+    filter: drop-shadow(0 6px 14px rgba(35, 77, 53, 0.15));
+    transition: opacity 0.3s ease;
+}
+
+.vine-left {
+    left: 0;
+}
+
+.vine-right {
+    right: 0;
+    transform: scaleX(-1);
+}
+
+@media (max-width: 1440px) {
+    .vine-decorative {
+        height: 440px;
+        opacity: 0.9;
+    }
+}
+
+@media (max-width: 1200px) {
+    .vine-decorative {
+        height: 360px;
+        opacity: 0.75;
+    }
+}
+
+@media (max-width: 992px) {
+    .vine-decorative {
+        display: none;
+    }
+}
+
+
+/* =========================================
+   Authentication & History View Styling
+   ========================================= */
+
+/* Opening Split Grid */
+.auth-landing-grid {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 40px;
+    margin: 2rem auto;
+    max-width: 1050px;
+}
+
+/* Left Mascot Column */
+.auth-brand-card {
+    text-align: center;
+    padding: 30px 20px;
+}
+
+/* Right Auth Card */
+.auth-card {
+    background: #FFFFFF;
+    border: 1px solid #DCE5DD;
+    border-radius: 20px;
+    padding: 28px 32px;
+    box-shadow: 0 10px 30px rgba(35, 77, 53, 0.08);
+    width: 100%;
+}
+
+.auth-header-title {
+    font-size: 26px;
+    font-weight: 800;
+    color: #234D35;
+    text-align: center;
+    margin-top: 10px;
+    margin-bottom: 4px;
+}
+
+.auth-header-sub {
+    font-size: 13.5px;
+    color: #66756A;
+    text-align: center;
+    margin-bottom: 22px;
+}
+
+/* Tab Segment Bar (Matching Reference Image in Green) */
+.auth-tabs-container {
+    display: flex;
+    border: 1px solid #DCE5DD;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 20px;
+    background: #FFFFFF;
+}
+
+.auth-tab-btn {
+    flex: 1;
+    text-align: center;
+    padding: 11px 0;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+}
+
+.auth-tab-active {
+    background-color: #234D35 !important;
+    color: #FFFFFF !important;
+}
+
+.auth-tab-inactive {
+    background-color: #FFFFFF !important;
+    color: #234D35 !important;
+}
+
+.auth-tab-inactive:hover {
+    background-color: #F4F8F4 !important;
+}
+
+/* Greeting on Main App */
+.user-greeting {
+    font-size: 22px;
+    font-weight: 800;
+    color: #315C42;
+    letter-spacing: -0.3px;
+    margin-bottom: 2px;
+}
+
+/* History Card */
+.history-entry-card {
+    background: #FFFFFF;
+    border: 1px solid #DCE5DD;
+    border-left: 5px solid #315C42;
+    border-radius: 14px;
+    padding: 20px 24px;
+    margin-bottom: 18px;
+    box-shadow: 0 4px 14px rgba(35, 77, 53, 0.06);
+}
+
+.history-time {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #718078;
+    margin-bottom: 6px;
+}
+
+.history-plant-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: #234D35;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+
+/* Primary and Secondary button overrides for Auth Tabs */
+div[data-testid="stButton"] button[kind="primary"] {
+    background-color: #234D35 !important;
+    color: #FFFFFF !important;
+    border: 1px solid #234D35 !important;
+    border-radius: 10px !important;
+    font-weight: 700 !important;
+}
+
+div[data-testid="stButton"] button[kind="secondary"] {
+    background-color: #FFFFFF !important;
+    color: #234D35 !important;
+    border: 1px solid #DCE5DD !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+}
+
+div[data-testid="stButton"] button[kind="secondary"]:hover {
+    background-color: #F0F6F1 !important;
+    border-color: #315C42 !important;
+}
